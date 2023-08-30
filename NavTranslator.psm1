@@ -383,7 +383,7 @@ function MakeSetup {
     $Property = @{
         BaseLanguageId = $BaseLanguageId
         WorkLanguageId = $WorkLanguageId
-        DictionatyPath = "$PSScriptRoot\.dictionary\{0}_{1}.csv" -f $BaseLanguageId, $WorkLanguageId
+        DictionaryPath = "$PSScriptRoot\.dictionary\{0}_{1}.csv" -f $BaseLanguageId, $WorkLanguageId
         DictionaryName = "{0}_{1}.csv" -f $BaseLanguageId, $WorkLanguageId
     }
     return New-Object pscustomobject -Property $Property
@@ -396,8 +396,8 @@ function GetDictionary {
     )
 
     $Dict = @{}
-    if (Test-Path -Path $LanguageSetup.DictionatyPath -PathType Leaf) {
-        Import-Csv -Path $LanguageSetup.DictionatyPath | ForEach-Object { $Dict.Add($_.Key, $_.Value) }
+    if (Test-Path -Path $LanguageSetup.DictionaryPath -PathType Leaf) {
+        Import-Csv -Path $LanguageSetup.DictionaryPath | ForEach-Object { $Dict.Add($_.Key, $_.Value) }
         Write-Host "$($LanguageSetup.DictionaryName) loaded with $($Dict.Count) lines" -ForegroundColor Cyan
     } else {
         Write-Host "New dictionary initialized" -ForegroundColor Cyan
@@ -417,7 +417,7 @@ function SaveDictionary {
     )
 
     if ($LanguageSetup.DictionaryLines -ne $Dict.Count) {
-        $Dict.GetEnumerator() | Select-Object Key, Value | Export-Csv -Path $LanguageSetup.DictionatyPath -Encoding utf8 -Force
+        $Dict.GetEnumerator() | Select-Object Key, Value | Export-Csv -Path $LanguageSetup.DictionaryPath -Encoding utf8 -Force
         Write-Host "Dictionary has been updated by $($Dict.Count - $LanguageSetup.DictionaryLines) new lines" -ForegroundColor Cyan
     } else {
         Write-Host "Dictionary has not been changed." -ForegroundColor DarkGray
