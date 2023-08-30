@@ -1,6 +1,6 @@
 # NavTranslator for Microsoft Dynamics NAV object files
 
-## PowerShell module for an automated Dynamics NAV objects language translation
+## Description
 
 The process is performed semi-automatically. You provide three parameters:
   - `Path` pointing to the folder where the objects for translation are located.
@@ -32,7 +32,7 @@ The function will find all the objects recursively within the Path. For an every
 - **Objects within the -Path will be updated without prior user confirmation. Consider to make backup first.**
 
 ## Contribution
-Suggestions and ideas are highly appreciated. Just open a PR or make an Issue.
+Suggestions and ideas are highly welcomed and appreciated. Just open a new Pull Request or an Issue.
 
 ***
 #### Legal Notice: Microsoft Dynamics NAV (or Dynamics NAV) is a registered trademark by Microsoft Corporation or Microsoft group of companies.
