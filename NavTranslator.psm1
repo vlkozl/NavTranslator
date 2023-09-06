@@ -1,6 +1,4 @@
-Using Module ".\LanguageOption.psm1"
-
-Import-Module "${env:ProgramFiles(x86)}\Microsoft Dynamics NAV\*\RoleTailored Client\NavModelTools.ps1" -DisableNameChecking -Force -NoClobber | Out-Null
+Import-Module "${env:ProgramFiles(x86)}\Microsoft Dynamics NAV\*\RoleTailored Client\Microsoft.Dynamics.Nav.Model.Tools.psd1" -DisableNameChecking -Force -NoClobber -WarningAction SilentlyContinue | Out-Null
 
 $Error.clear()
 
@@ -9,44 +7,70 @@ $Error.clear()
     Starts the translation update process, using Base- and Work- language id parameters.
 
 .DESCRIPTION
-    The process is performed semi-automatically.
-    You provide three parameters:
+    The process is performed semi-automatically. You provide three parameters:
         -Path, pointing to the folder where the objects for translation are located.
-        -BaseLanguageId, as a base language which will be used for making translations from.
-        -WorkLanguageId, as a language which will be checked.
+        -BaseLanguageId, as a language id which will be used for making translations from.
+        -WorkLanguageId, as a language id which will be checked and updated.
 
-    The script will find all the objects recursively within the Path.
-    For an every NAV object file you will be shown an existing translation and asked to enter a missing translation.
-    You can write or paste translated string and confirm it.
-    This translation will be added to the dictionary and will be used for the next translations.
+    Every LanguageId used is the integer number representing Windows Language Code.
+    See more here: https://www.venea.net/web/culture_code
+    To get your available languages, run:
+    Get-Culture -ListAvailable | select LCID,Name,DisplayName,ThreeLetterWindowsLanguageName,ThreeLetterISOLanguageName,TwoLetterISOLanguageName | Out-GridView
 
-    Finally, the "Work" Language will be imported to the object file.
+    The script will find all the Dynamics NAV TXT format objects recursively within the Path. Every
+    object will be tested for missing translations based on the settings provided. In case of missing
+    translations you will be shown an existing translation and asked to enter a translation if DeepL
+    is not selected to use. If you selected to use DeepL, the script will ask DeepL API for a
+    translation first.
 
-    IMPORTANT: Expected encoding is UTF8: for NAV objects, translations and dictionary.
+    You will be asked to confirm translation, where you can edit it or to keep the original value.
 
-.EXAMPLE
-    Stan wants to translate NAV objects from English to German.
+    Finally, all missing translations will be imported to the object file.
+    Every file is processed separately, so you can stop the process at any time.
+
+    Dictionary
+    A simple CSV file dictionary is used to store and reuse translations. The dictionary is saved in the
+    ".\.dictionary\" folder. The dictionary is created automatically when it is not found. The dictionary
+    will be filled with all confirmed translations and saved to the same path. During translation process,
+    the dictionary will be checked for existing translations.
+    Existing dictionaries will be reused for all the next translations with the same language settings.
+
+    DeepL
+    DeepL is a translation web service which provides a free REST API. See more: https://www.deepl.com/pro-api
+    To use it, you need to acquire an API key. When you start translating, if confirmed, API key will be
+    checked automatically from ".\.deepl\apikey.xml" path. If key is not found, you will be asked to enter it.
+    The API key will be stored in the encrypted file format that is only possible to read by the current user
+    on the current machine. Read more here:
+        https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/import-clixml?view=powershell-7.3
+        https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/export-clixml?view=powershell-7.3
+
+    IMPORTANT: Expected encoding for all files is UTF8. This applies to NAV objects, translations, dictionary.
+
+    .EXAMPLE
+    Stan wants to translate NAV objects from English to German. He has a NAV database with English as a base language.
     Prerequisites:
         - NAV objects has been exported to "Path" folder
         - NAV objects are in UTF8 encoding
-        - ENU Language layer is existing in NAV objects and/or expected as base DevelopmentLanguage
+        - ENU Language layer is existing in NAV objects and/or expected as base DevelopmentLanguageId.
 
     Stan runs the following command:
-    > Start-TranslationProcess -Path .\Objects -BaseLanguageId ENU -WorkLanguageId DEU
+    > Start-TranslationProcess -Path .\Objects -BaseLanguageId 1033 -WorkLanguageId 1031
 
     Result:
         - The script will find all the objects recursively and will help automate translation process.
-        - Translations dictionary will be created in ".\.dictionary\<BaseLanguageId>_<WorkLanguageId>.csv"
+        - Files within the Path will be updated.
+        - Translations dictionary will be created in ".\.dictionary\ENU_DEU.csv"
         - Dictionary will be automatically reused for any further translations given the same Base and Missing language ids.
+        - DeepL API key will be created under ".\.deepl\apikey.xml"
 
 .PARAMETER Path
-    Path to the folder where NAV objects are located.
+    Path to the folder where NAV TXT objects are located.
 
 .PARAMETER BaseLanguageId
-    Language Id which will be used as a base for translations.
+    Language Id which will be used as a base for translations. Windows LCID.
 
 .PARAMETER WorkLanguageId
-    Language Id which will be checked.
+    Language Id which will be checked. Windows LCID.
 #>
 function Start-TranslationProcess {
     [CmdletBinding()]
@@ -55,21 +79,33 @@ function Start-TranslationProcess {
         [string] $Path,
 
         [Parameter(mandatory = $true)]
-        [LanguageOption] $BaseLanguageId,
+        [ushort] $BaseLanguageId,
 
         [Parameter(mandatory = $true)]
-        [LanguageOption] $WorkLanguageId
+        [ushort] $WorkLanguageId
     )
 
     begin {
         if ($BaseLanguageId -eq $WorkLanguageId) {
-            throw "BaseLanguageId and WorkLanguageId cannot be the same."
+            throw "BaseLanguageId and WorkLanguageId cannot be the same"
         }
-        $LanguageSetup = MakeSetup -BaseLanguageId $BaseLanguageId -WorkLanguageId $WorkLanguageId
-        $Dict = GetDictionary -LanguageSetup $LanguageSetup
-        $ObjectFiles = Get-ChildItem $Path -File -Recurse -Exclude '*_*'
 
-        Write-Host "Total files for translation: $($ObjectFiles.Count)" -ForegroundColor Cyan
+        $UseDeepL = Get-UserConfirmation -Text "Use DeepL translations"
+        if ($UseDeepL) {
+            Initialize-DeeplCredentials
+        } else {
+            Write-Host "DeepL translation service will not be used" -ForegroundColor DarkGray
+        }
+
+        $LanguageSetup = Initialize-LanguageSetup -BaseLanguageId $BaseLanguageId -WorkLanguageId $WorkLanguageId
+        $Dict = Get-Dictionary -LanguageSetup $LanguageSetup
+        $ObjectFiles = Get-ChildItem $Path -File -Recurse -Exclude '*_*' -Filter '*.txt'
+
+        Write-Host "Total files found: " -NoNewline -ForegroundColor Cyan
+        Write-Host $($ObjectFiles.Count) -ForegroundColor Yellow
+        if (!(Get-UserConfirmation -Text "Ready to start")) {
+            break
+        }
         Write-Host
     }
 
@@ -78,28 +114,30 @@ function Start-TranslationProcess {
             Write-Host "============================================" -ForegroundColor Cyan
             Write-Host "File: $($File.Name)" -ForegroundColor White
 
-            if (!(FileHaveMissingTranslation -FilePath $File.FullName -LanguageId $WorkLanguageId)) {
+            if (!(Test-FileHaveMissingTranslation -FilePath $File.FullName -LanguageId $WorkLanguageId)) {
                 Write-Host "Nothing to translate"
                 Write-Host
                 continue
             }
 
             $TranslationFiles = Export-LanguageFiles -File $File -BaseLanguageId $LanguageSetup.BaseLanguageId -WorkLanguageId $LanguageSetup.WorkLanguageId
+            $TranslationFiles | Add-Member -MemberType NoteProperty -Name UseDeepL -Value $UseDeepL
+
             $MissingTranslationsFileContent = Get-Content -Path $TranslationFiles.MissingTranslationsFile -Encoding utf8
-            Write-Host "Missing Translations: $($MissingTranslationsFileContent.Count)"
+            Write-Host "Missing translations: $($MissingTranslationsFileContent.Count)"
 
             foreach ($Line in $MissingTranslationsFileContent) {
                 Update-TranslationLine -Line $Line -LanguageSetup $LanguageSetup -TranslationFiles $TranslationFiles -Dict $Dict
             }
 
-            Import-Translation -FilePath $File.FullName -LanguagePath $TranslationFiles.WorkLanguageFile -LanguageId $LanguageSetup.WorkLanguageId
-            Remove-TrenslationFiles -TranslationFiles $TranslationFiles
+            Import-TranslationToFile -FilePath $File.FullName -LanguagePath $TranslationFiles.WorkLanguageFile -LanguageId $LanguageSetup.WorkLanguageId
+            Remove-TranslationFiles -TranslationFiles $TranslationFiles
+            Write-Host
             Write-Host "$($File.Name) updated" -ForegroundColor White
         }
-
     }
     end {
-        SaveDictionary -LanguageSetup $LanguageSetup -Dict $Dict
+        Save-Dictionary -LanguageSetup $LanguageSetup -Dict $Dict
     }
 }
 
@@ -117,64 +155,78 @@ function Update-TranslationLine {
 
         [Parameter(mandatory = $true)]
         [hashtable] $Dict
-
     )
-    $Pattern = GetPattern -Line $Line -WorkLanguageId $LanguageSetup.WorkLanguageId
-    $BaseLanguageString = GetLanguageString -LanguageFile $TranslationFiles.BaseLanguageFile -Pattern $Pattern
-    $WorkLanguageString = GetLanguageString -LanguageFile $TranslationFiles.WorkLanguageFile -Pattern $Pattern
+    $Pattern = Get-SubstringByPattern -Line $Line -WorkLanguageId $LanguageSetup.WorkLanguageId
+    $BaseLanguageString = Read-LanguageString -LanguageFile $TranslationFiles.BaseLanguageFile -Pattern $Pattern
+    $WorkLanguageString = Read-LanguageString -LanguageFile $TranslationFiles.WorkLanguageFile -Pattern $Pattern
+
+    # Skip translating when base language string is empty
+    if ([string]::IsNullOrEmpty($BaseLanguageString)) {
+        return
+    }
 
     Write-Host
-    Write-Host "Pattern: $Pattern" -ForegroundColor White
-    Write-Host "$($LanguageSetup.BaseLanguageId) String: " -NoNewline
-    Write-Host $BaseLanguageString -ForegroundColor Yellow
+    Write-Host "Pattern: $Pattern" -ForegroundColor DarkGray
+    Show-StringWithComment -LanguageName $LanguageSetup.BaseLanguageName -String $BaseLanguageString -Comment ''
+
     $DictValue = $Dict[$BaseLanguageString]
 
+    # DevelopmentLanguageId fired or current Dictionary
     if ($WorkLanguageString -ne '') {
-        Write-Host "$($LanguageSetup.WorkLanguageId) String: " -NoNewline
-        Write-Host $WorkLanguageString -ForegroundColor Yellow
+        Show-StringWithComment -LanguageName $LanguageSetup.WorkLanguageName -String $WorkLanguageString -Comment 'automatically suggested'
         if ([string]::IsNullOrEmpty($DictValue)) {
             $Dict.Add($BaseLanguageString, $WorkLanguageString)
         }
     } else {
-        if ([string]::IsNullOrEmpty($DictValue)) {
-            $WorkLanguageString = Get-NewStringValueFromUser -WorkLanguageId $LanguageSetup.WorkLanguageId -BaseLanguageString $BaseLanguageString
-            $Dict.Add($BaseLanguageString, $WorkLanguageString)
-        } else {
+        # Dictionary value found
+        if (!([string]::IsNullOrEmpty($DictValue))) {
             $WorkLanguageString = $DictValue
-            Write-Host "$($LanguageSetup.WorkLanguageId) string: " -NoNewline
-            Write-Host $WorkLanguageString -ForegroundColor Yellow -NoNewline
-            Write-Host " (copied from dictionary)" -ForegroundColor DarkGray
+            Show-StringWithComment -LanguageName $LanguageSetup.WorkLanguageName -String $WorkLanguageString -Comment 'copied from dictionary'
         }
-        SetLanguageString -LanguageFile $TranslationFiles.WorkLanguageFile -Pattern $Pattern -NewValue $WorkLanguageString
-        Write-Host
+        # Dictionary value not found
+        else {
+            # Ask DeepL at first
+            if ($TranslationFiles.UseDeepL) {
+                $WorkLanguageString = Get-DeeplTranslation -String $BaseLanguageString -LanguageSetup $LanguageSetup
+            }
+
+            if ([string]::IsNullOrEmpty($WorkLanguageString)) {
+                # Ask User when DeepL failed
+                $BaseLanguageString | Set-Clipboard
+                $WorkLanguageString = Get-UserTranslation -LanguageName $LanguageSetup.WorkLanguageName
+            }
+            $Dict.Add($BaseLanguageString, $WorkLanguageString)
+        }
     }
+    Save-LanguageString -LanguageFile $TranslationFiles.WorkLanguageFile -Pattern $Pattern -NewValue $WorkLanguageString
 }
 
-function Get-NewStringValueFromUser {
+function Show-StringWithComment {
     [CmdletBinding()]
     param (
         [Parameter(mandatory = $true)]
-        [string] $WorkLanguageId,
+        [string] $LanguageName,
 
         [Parameter(mandatory = $true)]
-        [string] $BaseLanguageString
-    )
-    $WorkLanguageString = ''
-    $Confirmed = $false
-    while (!$Confirmed) {
-        $BaseLanguageString | Set-Clipboard
-        $WorkLanguageString = Read-Host -Prompt "Enter $WorkLanguageId string"
-        if (![string]::IsNullOrEmpty($WorkLanguageString)) {
-            Write-Host "$WorkLanguageId string: " -NoNewline
-            Write-Host $WorkLanguageString -ForegroundColor Yellow
-            $Confirmed = GetUserConfirmation -Text "Looks correct"
+        [string] $String,
 
-        }
+        [Parameter(mandatory = $false)]
+        [string] $Comment,
+
+        [Parameter(mandatory = $false)]
+        [switch] $NewLine
+    )
+    if ($NewLine) {
+        Write-Host
     }
-    return $WorkLanguageString
+    Write-Host "$LanguageName : " -NoNewline
+    Write-Host $String -ForegroundColor Yellow
+    if (![string]::IsNullOrEmpty($Comment)) {
+        Write-Host "($Comment)" -ForegroundColor DarkGray
+    }
 }
 
-function Import-Translation {
+function Import-TranslationToFile {
     [CmdletBinding()]
     param (
         [Parameter(mandatory = $true)]
@@ -184,17 +236,17 @@ function Import-Translation {
         [string] $LanguagePath,
 
         [Parameter(mandatory = $true)]
-        [LanguageOption] $LanguageId
+        [ushort] $LanguageId
     )
+    $Params = @{
+        Source       = $FilePath
+        Destination  = $FilePath
+        LanguagePath = $LanguagePath
+        LanguageId   = $LanguageId
+        Encoding     = 'UTF8'
+        Force        = $true
+    }
     try {
-        $Params = @{
-            Source       = $FilePath
-            Destination  = $FilePath
-            LanguagePath = $LanguagePath
-            LanguageId   = $LanguageId
-            Encoding     = 'UTF8'
-            Force        = $true
-        }
         Import-NAVApplicationObjectLanguage @Params
     } catch {
         Write-Host $_.ScriptStackTrace -ForegroundColor Yellow
@@ -202,7 +254,7 @@ function Import-Translation {
     }
 }
 
-function GetLanguageString {
+function Read-LanguageString {
     [CmdletBinding()]
     param (
         [Parameter(mandatory = $true)]
@@ -218,7 +270,7 @@ function GetLanguageString {
     return $Line.ToString().Remove(0, $Line.ToString().IndexOf(':') + 1)
 }
 
-function SetLanguageString {
+function Save-LanguageString {
     [CmdletBinding()]
     param (
         [Parameter(mandatory = $true)]
@@ -238,36 +290,16 @@ function SetLanguageString {
     $Content.Replace($Line, $NewLine) | Set-Content $LanguageFile -Encoding utf8
 }
 
-<#
-.SYNOPSIS
-    Removes empty lines from a file and overwrites it.
-    Empty lines appear as a bug during export language process.
-#>
-function Remove-EmptyLinesFromFile {
-    [CmdletBinding()]
-    param (
-        [Parameter(mandatory = $true)]
-        [string] $Path
-    )
-    $c = Get-Content -Path $Path -Encoding utf8
-    $c | Where-Object { $_ -ne '' } | Set-Content -Path $Path -Encoding utf8
-}
-
-function GetPattern {
+function Get-SubstringByPattern {
     [CmdletBinding()]
     param (
         [Parameter(mandatory = $true)]
         [string] $Line,
 
         [Parameter(mandatory = $true)]
-        [LanguageOption] $WorkLanguageId
+        [ushort] $WorkLanguageId
     )
-
-    switch ($WorkLanguageId) {
-        ([LanguageOption]::ENU) { return $Line.Substring(0, $Line.IndexOf('A1033') - 1) }
-        ([LanguageOption]::DEU) { return $Line.Substring(0, $Line.IndexOf('A1031') - 1) }
-    }
-
+    return $Line.Substring(0, $Line.IndexOf($WorkLanguageId.ToString()) - 2)
 }
 
 function Export-LanguageFiles {
@@ -277,19 +309,49 @@ function Export-LanguageFiles {
         [System.IO.FileInfo] $File,
 
         [Parameter(mandatory = $true)]
-        [LanguageOption] $BaseLanguageId,
+        [ushort] $BaseLanguageId,
 
         [Parameter(mandatory = $true)]
-        [LanguageOption] $WorkLanguageId
+        [ushort] $WorkLanguageId
     )
-    $MissingTranslationsFile = GetMissingTranslationsFile -File $File -LanguageId $WorkLanguageId
-    $BaseLanguageFile = GetLanguageFile -File $File -LanguageId $BaseLanguageId
-    $WorkLanguageFile = GetLanguageFile -File $File -LanguageId $WorkLanguageId
+    $MissingTranslationsFile = Export-MissingTranslationsFile -File $File -LanguageId $WorkLanguageId
+    $BaseLanguageFile = Export-LanguageFileWithFix -File $File -LanguageId $BaseLanguageId
+    $WorkLanguageFile = Export-LanguageFileWithFix -File $File -LanguageId $WorkLanguageId
 
-    return (New-Object psobject -ArgumentList @{ BaseLanguageFile = $BaseLanguageFile; WorkLanguageFile = $WorkLanguageFile; MissingTranslationsFile = $MissingTranslationsFile })
+    return (New-Object pscustomobject -ArgumentList @{ BaseLanguageFile = $BaseLanguageFile; WorkLanguageFile = $WorkLanguageFile; MissingTranslationsFile = $MissingTranslationsFile })
 }
 
-function Remove-TrenslationFiles {
+function Export-LanguageFileWithFix {
+    [CmdletBinding()]
+    param(
+        [Parameter(mandatory = $true)]
+        [System.IO.FileInfo] $File,
+
+        [Parameter(mandatory = $true)]
+        [ushort] $LanguageId
+    )
+    $LanguageFile = New-FilePath -File $File -LanguageId $LanguageId
+    Export-NAVApplicationObjectLanguage -Source $File.FullName -Destination $LanguageFile -LanguageId $LanguageId -Encoding UTF8 -Force
+    Remove-EmptyLinesFromFile -Path $LanguageFile
+    return $LanguageFile
+}
+
+<#
+.SYNOPSIS
+    Removes empty lines from a file and overwrites it.
+    Empty lines appear as a bug of Export-NAVApplicationObjectLanguage cmdled.
+#>
+function Remove-EmptyLinesFromFile {
+    [CmdletBinding()]
+    param (
+        [Parameter(mandatory = $true)]
+        [string] $Path
+    )
+    $FileContent = Get-Content -Path $Path -Encoding utf8
+    $FileContent | Where-Object { $_ -ne '' } | Set-Content -Path $Path -Encoding utf8
+}
+
+function Remove-TranslationFiles {
     [CmdletBinding()]
     param (
         [Parameter(mandatory = $true)]
@@ -300,105 +362,108 @@ function Remove-TrenslationFiles {
     Remove-Item -Path $TranslationFiles.WorkLanguageFile -Force
 }
 
-function GetLanguageFile {
+function Export-MissingTranslationsFile {
     [CmdletBinding()]
     param(
         [Parameter(mandatory = $true)]
         [System.IO.FileInfo] $File,
 
         [Parameter(mandatory = $true)]
-        [LanguageOption] $LanguageId
+        [ushort] $LanguageId
     )
-    $LanguageFile = MakeFileName -File $File -LanguageId $LanguageId
-    Export-NAVApplicationObjectLanguage -Source $File.FullName -Destination $LanguageFile -LanguageId $LanguageId -Encoding UTF8 -Force
-    Remove-EmptyLinesFromFile -Path $LanguageFile
-    return $LanguageFile
-}
-
-function GetMissingTranslationsFile {
-    [CmdletBinding()]
-    param(
-        [Parameter(mandatory = $true)]
-        [System.IO.FileInfo] $File,
-
-        [Parameter(mandatory = $true)]
-        [LanguageOption] $LanguageId
-    )
-    $MissingFileName = MakeFileName -File $File -LanguageId $LanguageId -Missing
-    Test-NAVApplicationObjectLanguage -Source $File.FullName -LanguageId $LanguageId -PassThru -WarningAction SilentlyContinue | Sort-Object ObjectType, Id | ForEach-Object {
+    $MissingFileName = New-FilePath -File $File -LanguageId $LanguageId -Missing
+    Test-NAVApplicationObjectLanguage -Source $File.FullName -LanguageId $LanguageId -PassThru -WarningAction SilentlyContinue | ForEach-Object {
         Add-Content -Value $($_.TranslateLines) -Path $MissingFileName -Force
     }
     return $MissingFileName
 }
 
-function FileHaveMissingTranslation {
+function Test-FileHaveMissingTranslation {
     [CmdletBinding()]
     param (
         [Parameter(mandatory = $true)]
         [string] $FilePath,
 
         [Parameter(mandatory = $true)]
-        [LanguageOption] $LanguageId
+        [ushort] $LanguageId
     )
     $TestResult = Test-NAVApplicationObjectLanguage -Source $FilePath -LanguageId $LanguageId -PassThru -WarningAction SilentlyContinue
     return $TestResult.TranslateLines.Count -gt 0
 }
 
-function MakeFileName {
+function New-FilePath {
     [CmdletBinding()]
     param (
         [Parameter(mandatory = $true)]
         [System.IO.FileInfo] $File,
 
         [Parameter(mandatory = $true)]
-        [LanguageOption] $LanguageId,
+        [ushort] $LanguageId,
 
         [Parameter(mandatory = $false)]
         [switch] $Missing
     )
     if ($Missing) { $MissingText = '_MISSING' }
-    return (Join-Path -Path $File.DirectoryName -ChildPath ($File.BaseName + '_' + $LanguageId + $MissingText + '.TXT'))
+    return (Join-Path -Path $File.DirectoryName -ChildPath ($File.BaseName + '_' + $LanguageId.ToString() + $MissingText + '.TXT'))
 }
 
-function GetUserConfirmation {
+function Initialize-LanguageSetup {
     [CmdletBinding()]
     param (
         [Parameter(mandatory = $true)]
-        [string] $Text
-    )
-    Write-Host "$Text, (y/n)?" -NoNewline
-    $Readkey = [console]::ReadKey()
-    return $Readkey.Key -in "Y", "YES", "Enter"
-}
-
-function MakeSetup {
-    [CmdletBinding()]
-    param (
-        [Parameter(mandatory = $true)]
-        [LanguageOption] $BaseLanguageId,
+        [ushort] $BaseLanguageId,
 
         [Parameter(mandatory = $true)]
-        [LanguageOption] $WorkLanguageId
+        [ushort] $WorkLanguageId
     )
-    $Property = @{
-        BaseLanguageId = $BaseLanguageId
-        WorkLanguageId = $WorkLanguageId
-        DictionaryPath = "$PSScriptRoot\.dictionary\{0}_{1}.csv" -f $BaseLanguageId, $WorkLanguageId
-        DictionaryName = "{0}_{1}.csv" -f $BaseLanguageId, $WorkLanguageId
+    $AllCultures = Get-Culture -ListAvailable
+    $BaseLanguage = $AllCultures | Where-Object LCID -EQ $BaseLanguageId
+    $WorkLanguage = $AllCultures | Where-Object LCID -EQ $WorkLanguageId
+
+    if ([string]::IsNullOrEmpty($BaseLanguage)) {
+        throw "BaseLanguageId $BaseLanguageId is not found in the list of available cultures.`nUse Get-Culture -ListAvailable to see the list of available cultures"
+    }
+    if ([string]::IsNullOrEmpty($WorkLanguage)) {
+        throw "WorkLanguageId $WorkLanguageId is not found in the list of available cultures.`nUse Get-Culture -ListAvailable to see the list of available cultures"
+    }
+
+    Write-Host "Language settings identified" -ForegroundColor Cyan
+    Write-Host "BaseLanguage: " -NoNewline -ForegroundColor Cyan
+    Write-Host "$($BaseLanguage.ThreeLetterWindowsLanguageName) - $($BaseLanguage.DisplayName)" -ForegroundColor Yellow
+    Write-Host "WorkLanguage: " -NoNewline -ForegroundColor Cyan
+    Write-Host "$($WorkLanguage.ThreeLetterWindowsLanguageName) - $($WorkLanguage.DisplayName)" -ForegroundColor Yellow
+
+    $BaseLanguageName = $BaseLanguage.ThreeLetterWindowsLanguageName.ToUpper()
+    $WorkLanguageName = $WorkLanguage.ThreeLetterWindowsLanguageName.ToUpper()
+
+    $Property = [ordered]@{
+        BaseLanguageId      = $BaseLanguageId
+        WorkLanguageId      = $WorkLanguageId
+
+        BaseLanguageName    = $BaseLanguageName
+        WorkLanguageName    = $WorkLanguageName
+        WorkLanguageISOCode = $WorkLanguage.TwoLetterISOLanguageName
+
+        DictionatyPath      = "$PSScriptRoot\.dictionary\{0}_{1}.csv" -f $BaseLanguageName, $WorkLanguageName
+        DictionaryName      = "{0}_{1}.csv" -f $BaseLanguageName, $WorkLanguageName
     }
     return New-Object pscustomobject -Property $Property
 }
 
-function GetDictionary {
+function Get-Dictionary {
     param (
         [Parameter(mandatory = $true)]
         [pscustomobject] $LanguageSetup
     )
 
     $Dict = @{}
-    if (Test-Path -Path $LanguageSetup.DictionaryPath -PathType Leaf) {
-        Import-Csv -Path $LanguageSetup.DictionaryPath | ForEach-Object { $Dict.Add($_.Key, $_.Value) }
-        Write-Host "$($LanguageSetup.DictionaryName) loaded with $($Dict.Count) lines" -ForegroundColor Cyan
+    if (Test-Path -Path $LanguageSetup.DictionatyPath -PathType Leaf) {
+        Import-Csv -Path $LanguageSetup.DictionatyPath | ForEach-Object { $Dict.Add($_.Key, $_.Value) }
+        Write-Host "Dictionary " -NoNewline -ForegroundColor Cyan
+        Write-Host $($LanguageSetup.DictionaryName) -NoNewline -ForegroundColor Yellow
+        Write-Host " with " -NoNewline -ForegroundColor Cyan
+        Write-Host $($Dict.Count) -ForegroundColor Yellow -NoNewline
+        Write-Host " lines found" -ForegroundColor Cyan
     } else {
         Write-Host "New dictionary initialized" -ForegroundColor Cyan
     }
@@ -406,7 +471,7 @@ function GetDictionary {
     return $Dict
 }
 
-function SaveDictionary {
+function Save-Dictionary {
     [CmdletBinding()]
     param (
         [Parameter(mandatory = $true)]
@@ -417,9 +482,181 @@ function SaveDictionary {
     )
 
     if ($LanguageSetup.DictionaryLines -ne $Dict.Count) {
-        $Dict.GetEnumerator() | Select-Object Key, Value | Export-Csv -Path $LanguageSetup.DictionaryPath -Encoding utf8 -Force
+        $Dict.GetEnumerator() | Select-Object Key, Value | Export-Csv -Path $LanguageSetup.DictionatyPath -Encoding utf8 -Force
         Write-Host "Dictionary has been updated by $($Dict.Count - $LanguageSetup.DictionaryLines) new lines" -ForegroundColor Cyan
     } else {
-        Write-Host "Dictionary has not been changed." -ForegroundColor DarkGray
+        Write-Host "Dictionary has not been changed" -ForegroundColor DarkGray
     }
 }
+
+function Get-UserTranslation {
+    [CmdletBinding()]
+    param (
+        [Parameter(mandatory = $true)]
+        [string] $LanguageName
+    )
+    $Result = ''
+    $Confirmed = $false
+    while (!$Confirmed) {
+        if (([System.Console]::GetCursorPosition()).Item1 -ne 0) {
+            Write-Host
+        }
+        $Result = Read-Host -Prompt "Enter $LanguageName string"
+        if (![string]::IsNullOrEmpty($Result)) {
+            Show-StringWithComment -LanguageName $LanguageName -String $Result -Comment ''
+            $Confirmed = Get-UserConfirmation
+        }
+    }
+    return $Result
+}
+
+function Initialize-DeeplCredentials {
+    [CmdletBinding()]
+    param()
+
+    if (Test-Path -Path "$PSScriptRoot\.deepl\ApiKey.xml" -PathType Leaf) {
+        Write-Host "DeepL API key found" -ForegroundColor DarkGray
+    } else {
+        Write-Host "DeepL API key not found" -ForegroundColor Yellow
+        $DeeplCred = Get-Credential -Message "Enter DeepL API key (without DeepL-Auth-Key prefix)" -UserName 'DeepL'
+        $DeeplCred | Export-Clixml -Path "$PSScriptRoot\.deepl\ApiKey.xml" -Force
+        Write-Host "DeepL API key saved" -ForegroundColor DarkGray
+    }
+}
+
+function Get-DeeplTranslation {
+    [CmdletBinding()]
+    param (
+        [Parameter(mandatory = $true)]
+        [string] $String,
+
+        [parameter(mandatory = $true)]
+        [pscustomobject] $LanguageSetup
+    )
+
+    $Result = Invoke-DeepLApiCall -String $String -LanguageISOCode $LanguageSetup.WorkLanguageISOCode
+    if ([string]::IsNullOrEmpty($Result)) {
+        return ''
+    }
+    Show-StringWithComment -LanguageName $LanguageSetup.WorkLanguageName -String $Result -Comment ''
+    $Result = Get-ExtendedStringConfirmation -OriginalString $String -NewString $Result -LanguageName $LanguageSetup.WorkLanguageName
+    return $Result
+}
+
+function Invoke-DeepLApiCall {
+    [CmdletBinding()]
+    param (
+        [Parameter(mandatory = $true)]
+        [string] $String,
+
+        [parameter(mandatory = $true)]
+        [string] $LanguageISOCode
+    )
+    begin {
+        # Using default way of storing PowerShell credentials. Please override if this does not fits you.
+        $ApiKey = (Import-Clixml -Path "$PSScriptRoot\.deepl\ApiKey.xml").GetNetworkCredential().Password
+        $header = @{ "Authorization" = ('DeepL-Auth-Key ' + $ApiKey) }
+        $body = "text=$String&target_lang=$LanguageISOCode"
+        $RequestParams = @{
+            Method      = 'Post'
+            Uri         = "https://api-free.deepl.com/v2/translate"
+            SslProtocol = 'Tls12'
+            Headers     = $header
+            Body        = $body
+        }
+    }
+    process {
+        Write-Host "Requesting DeepL translation " -ForegroundColor DarkGray -NoNewline
+        try {
+            $Result = (Invoke-RestMethod @RequestParams).translations.text
+            Write-Host
+            return $Result
+        } catch {
+            Write-Host "failed" -ForegroundColor DarkRed
+            return ''
+        }
+    }
+}
+
+function Get-ExtendedStringConfirmation {
+    [CmdletBinding()]
+    param (
+        [Parameter(mandatory = $true)]
+        [string] $OriginalString,
+
+        [Parameter(mandatory = $true)]
+        [string] $NewString,
+
+        [Parameter(mandatory = $true)]
+        [string] $LanguageName
+    )
+    while (!$Confirmed) {
+        Write-Host "Select: [A]ccept / [K]eep original / [E]dit / [C]apitalize? " -NoNewline
+        $Readkey = [console]::ReadKey()
+
+        switch ($Readkey.Key) {
+            "A" {
+                $Result = $NewString
+                $Confirmed = $true
+                break
+            }
+            "Enter" {
+                $Result = $NewString
+                $Confirmed = $true
+                break
+            }
+            "K" {
+                $Result = $OriginalString
+                Show-StringWithComment -LanguageName $LanguageName -String $Result -Comment '' -NewLine
+                $Confirmed = $true
+                break
+            }
+            "C" {
+                $Result = Get-CapitalizeFirstLetters -String $NewString
+                Show-StringWithComment -LanguageName $LanguageName -String $Result -Comment '' -NewLine
+                $Confirmed = Get-UserConfirmation
+                break
+            }
+            "E" {
+                Write-Host
+                $NewString | Set-Clipboard
+                $Result = Read-Host -Prompt "Enter $LanguageName string"
+                Show-StringWithComment -LanguageName $LanguageName -String $Result -Comment ''
+                $Confirmed = Get-UserConfirmation
+                break
+            }
+            default {
+                $Result = ''
+            }
+        }
+    }
+    return $Result
+}
+
+function Get-CapitalizeFirstLetters {
+    [CmdletBinding()]
+    param (
+        [Parameter(mandatory = $true)]
+        [string] $String
+    )
+    $CapitalizedString = (Get-Culture).TextInfo.ToTitleCase($String)
+    return $CapitalizedString
+}
+
+function Get-UserConfirmation {
+    [CmdletBinding()]
+    param (
+        [Parameter(mandatory = $false)]
+        [string] $Text = "Looks good"
+    )
+    $ResponseAccepted = $false
+    Write-Host "$Text, [Y]es / [N]o? " -NoNewline
+    while (!$ResponseAccepted) {
+        $Readkey = [console]::ReadKey()
+        Write-Host
+        $ResponseAccepted = $Readkey.Key -in "Y", "YES", "N", "NO", "Enter"
+    }
+    return $Readkey.Key -in "Y", "YES", "Enter"
+}
+
+Export-ModuleMember -Function Start-TranslationProcess
