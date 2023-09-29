@@ -155,7 +155,7 @@ function Update-TranslationLine {
         [pscustomobject] $TranslationFiles,
 
         [Parameter(mandatory = $true)]
-        [hashtable] $Dict
+        [System.Collections.Specialized.OrderedDictionary] $Dict
     )
     $Pattern = Get-SubstringByPattern -Line $Line -WorkLanguageId $LanguageSetup.WorkLanguageId
     $BaseLanguageString = Read-LanguageString -LanguageFile $TranslationFiles.BaseLanguageFile -Pattern $Pattern
@@ -457,7 +457,7 @@ function Get-Dictionary {
         [pscustomobject] $LanguageSetup
     )
 
-    $Dict = @{}
+    $Dict = [ordered]@{}
     if (Test-Path -Path $LanguageSetup.DictionatyPath -PathType Leaf) {
         Import-Csv -Path $LanguageSetup.DictionatyPath | ForEach-Object { $Dict.Add($_.Key, $_.Value) }
         Write-Host "Dictionary " -NoNewline -ForegroundColor Cyan
@@ -479,11 +479,11 @@ function Save-Dictionary {
         [pscustomobject] $LanguageSetup,
 
         [Parameter(mandatory = $true)]
-        [hashtable] $Dict
+        [System.Collections.Specialized.OrderedDictionary] $Dict
     )
 
     if ($LanguageSetup.DictionaryLines -ne $Dict.Count) {
-        $Dict.GetEnumerator() | Select-Object Key, Value | Export-Csv -Path $LanguageSetup.DictionatyPath -Encoding utf8 -Force
+        $Dict.GetEnumerator() | Select-Object Key, Value | Sort-Object -Property 'Key' | Export-Csv -Path $LanguageSetup.DictionatyPath -Encoding utf8 -Force
         Write-Host "Dictionary has been updated by $($Dict.Count - $LanguageSetup.DictionaryLines) new lines" -ForegroundColor Cyan
     } else {
         Write-Host "Dictionary has not been changed" -ForegroundColor DarkGray

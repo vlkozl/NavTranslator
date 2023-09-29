@@ -1,6 +1,7 @@
 # Change Log
 
 ### v1.2 (29.09.2023)
+ - Dictionary is now alfabetically sorted using [System.Collections.Specialized.OrderedDictionary]
  - Added [B]reak option to ExtendedStringConfirmation
  - Other minor changes
 
