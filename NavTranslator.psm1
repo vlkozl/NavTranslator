@@ -591,7 +591,7 @@ function Get-ExtendedStringConfirmation {
         [string] $LanguageName
     )
     while (!$Confirmed) {
-        Write-Host "Select: [A]ccept / [K]eep original / [E]dit / [C]apitalize? " -NoNewline
+        Write-Host "Select: [A]ccept / [K]eep original / [E]dit / [C]apitalize / [B]reak? " -NoNewline
         $Readkey = [console]::ReadKey()
 
         switch ($Readkey.Key) {
@@ -624,6 +624,9 @@ function Get-ExtendedStringConfirmation {
                 Show-StringWithComment -LanguageName $LanguageName -String $Result -Comment ''
                 $Confirmed = Get-UserConfirmation
                 break
+            }
+            "B" {
+                throw ""
             }
             default {
                 $Result = ''

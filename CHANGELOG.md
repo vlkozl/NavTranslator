@@ -1,5 +1,9 @@
 # Change Log
 
+### v1.2 (29.09.2023)
+ - Added [B]reak option to ExtendedStringConfirmation
+
+
 ### v1.1 (06.09.2023)
  - Adding Manifest to give more information about the module
  - Importing depenency module Microsoft.Dynamics.Nav.Model.Tools directly
