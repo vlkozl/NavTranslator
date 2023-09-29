@@ -111,13 +111,20 @@ function Start-TranslationProcess {
     }
 
     process {
+        $Index = 0
+        $FilesUpdated = 0
+        $TotalFiles = $ObjectFiles.Count
+        $ActivityText = "Translating Files"
         foreach ($File in $ObjectFiles) {
-            Write-Host "============================================" -ForegroundColor Cyan
-            Write-Host "File: $($File.Name)" -ForegroundColor White
+            $Index += 1
+            $Progress = [Math]::Round(($Index / $TotalFiles) * 100)
+            Write-Progress -Activity $ActivityText -Status "$($File.Name) ($Index of $TotalFiles)" -PercentComplete $Progress
 
-            if (!(Test-FileHaveMissingTranslation -FilePath $File.FullName -LanguageId $WorkLanguageId)) {
-                Write-Host "Nothing to translate"
-                Write-Host
+            if (Test-FileHaveMissingTranslation -FilePath $File.FullName -LanguageId $WorkLanguageId) {
+                Write-Host "============================================" -ForegroundColor Cyan
+                Write-Host "File: $($File.Name)" -ForegroundColor White
+            }
+            else {
                 continue
             }
 
@@ -131,6 +138,7 @@ function Start-TranslationProcess {
                 Update-TranslationLine -Line $Line -LanguageSetup $LanguageSetup -TranslationFiles $TranslationFiles -Dict $Dict
             }
 
+            $FilesUpdated += 1
             Import-TranslationToFile -FilePath $File.FullName -LanguagePath $TranslationFiles.WorkLanguageFile -LanguageId $LanguageSetup.WorkLanguageId
             Remove-TranslationFiles -TranslationFiles $TranslationFiles
             Write-Host
@@ -138,6 +146,8 @@ function Start-TranslationProcess {
         }
     }
     end {
+        Write-Progress -Activity $ActivityText -Status "Ready" -Completed
+        Write-Host "Total files updated: $FilesUpdated" -ForegroundColor Cyan
         Save-Dictionary -LanguageSetup $LanguageSetup -Dict $Dict
     }
 }
