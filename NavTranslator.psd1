@@ -12,7 +12,7 @@
 RootModule = 'NavTranslator.psm1'
 
 # Version number of this module.
-ModuleVersion = '1.1'
+ModuleVersion = '1.2'
 
 # Supported PSEditions
 # CompatiblePSEditions = @()
@@ -30,7 +30,7 @@ CompanyName = 'Statista GmbH'
 Copyright = 'Vladimir Kozlov (c) 2023'
 
 # Description of the functionality provided by this module
-Description = 'Dynamics NAV Objects Language Translator'
+Description = 'Automated Dynamics NAV objects language translator'
 
 # Minimum version of the PowerShell engine required by this module
 PowerShellVersion = '7.0'

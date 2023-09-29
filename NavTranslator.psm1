@@ -12,9 +12,10 @@ $Error.clear()
         -BaseLanguageId, as a language id which will be used for making translations from.
         -WorkLanguageId, as a language id which will be checked and updated.
 
-    Every LanguageId used is the integer number representing Windows Language Code.
+    Every LanguageId is an integer number representing Windows Language Code.
     See more here: https://www.venea.net/web/culture_code
-    To get your available languages, run:
+
+    To get your available languages, run in PowerShell (at least v6.2):
     Get-Culture -ListAvailable | select LCID,Name,DisplayName,ThreeLetterWindowsLanguageName,ThreeLetterISOLanguageName,TwoLetterISOLanguageName | Out-GridView
 
     The script will find all the Dynamics NAV TXT format objects recursively within the Path. Every
@@ -33,7 +34,7 @@ $Error.clear()
     ".\.dictionary\" folder. The dictionary is created automatically when it is not found. The dictionary
     will be filled with all confirmed translations and saved to the same path. During translation process,
     the dictionary will be checked for existing translations.
-    Existing dictionaries will be reused for all the next translations with the same language settings.
+    Existing dictionaries will be reused for all translations with the same language settings.
 
     DeepL
     DeepL is a translation web service which provides a free REST API. See more: https://www.deepl.com/pro-api
@@ -60,7 +61,7 @@ $Error.clear()
         - The script will find all the objects recursively and will help automate translation process.
         - Files within the Path will be updated.
         - Translations dictionary will be created in ".\.dictionary\ENU_DEU.csv"
-        - Dictionary will be automatically reused for any further translations given the same Base and Missing language ids.
+        - Dictionary will be automatically reused for any further translations given the same Base and Work language ids.
         - DeepL API key will be created under ".\.deepl\apikey.xml"
 
 .PARAMETER Path
@@ -98,6 +99,7 @@ function Start-TranslationProcess {
         }
 
         $LanguageSetup = Initialize-LanguageSetup -BaseLanguageId $BaseLanguageId -WorkLanguageId $WorkLanguageId
+        $LanguageSetup | Add-Member -MemberType NoteProperty -Name UseDeepL -Value $UseDeepL
         $Dict = Get-Dictionary -LanguageSetup $LanguageSetup
         $ObjectFiles = Get-ChildItem $Path -File -Recurse -Exclude '*_*' -Filter '*.txt'
 
@@ -110,19 +112,24 @@ function Start-TranslationProcess {
     }
 
     process {
+        $Index = 0
+        $FilesUpdated = 0
+        $TotalFiles = $ObjectFiles.Count
+        $ActivityText = "Translating Files"
         foreach ($File in $ObjectFiles) {
+            $Index += 1
+            $Progress = [Math]::Round(($Index / $TotalFiles) * 100)
+            Write-Progress -Activity $ActivityText -Status "$($File.Name) ($Index of $TotalFiles)" -PercentComplete $Progress
+
+            if (Test-FileHaveMissingTranslation -FilePath $File.FullName -LanguageId $WorkLanguageId) {
             Write-Host "============================================" -ForegroundColor Cyan
             Write-Host "File: $($File.Name)" -ForegroundColor White
-
-            if (!(Test-FileHaveMissingTranslation -FilePath $File.FullName -LanguageId $WorkLanguageId)) {
-                Write-Host "Nothing to translate"
-                Write-Host
+            }
+            else {
                 continue
             }
 
             $TranslationFiles = Export-LanguageFiles -File $File -BaseLanguageId $LanguageSetup.BaseLanguageId -WorkLanguageId $LanguageSetup.WorkLanguageId
-            $TranslationFiles | Add-Member -MemberType NoteProperty -Name UseDeepL -Value $UseDeepL
-
             $MissingTranslationsFileContent = Get-Content -Path $TranslationFiles.MissingTranslationsFile -Encoding utf8
             Write-Host "Missing translations: $($MissingTranslationsFileContent.Count)"
 
@@ -130,6 +137,7 @@ function Start-TranslationProcess {
                 Update-TranslationLine -Line $Line -LanguageSetup $LanguageSetup -TranslationFiles $TranslationFiles -Dict $Dict
             }
 
+            $FilesUpdated += 1
             Import-TranslationToFile -FilePath $File.FullName -LanguagePath $TranslationFiles.WorkLanguageFile -LanguageId $LanguageSetup.WorkLanguageId
             Remove-TranslationFiles -TranslationFiles $TranslationFiles
             Write-Host
@@ -137,6 +145,8 @@ function Start-TranslationProcess {
         }
     }
     end {
+        Write-Progress -Activity $ActivityText -Status "Ready" -Completed
+        Write-Host "Total files updated: $FilesUpdated" -ForegroundColor Cyan
         Save-Dictionary -LanguageSetup $LanguageSetup -Dict $Dict
     }
 }
@@ -154,7 +164,7 @@ function Update-TranslationLine {
         [pscustomobject] $TranslationFiles,
 
         [Parameter(mandatory = $true)]
-        [hashtable] $Dict
+        [System.Collections.Specialized.OrderedDictionary] $Dict
     )
     $Pattern = Get-SubstringByPattern -Line $Line -WorkLanguageId $LanguageSetup.WorkLanguageId
     $BaseLanguageString = Read-LanguageString -LanguageFile $TranslationFiles.BaseLanguageFile -Pattern $Pattern
@@ -171,25 +181,29 @@ function Update-TranslationLine {
 
     $DictValue = $Dict[$BaseLanguageString]
 
-    # DevelopmentLanguageId fired or current Dictionary
-    if ($WorkLanguageString -ne '') {
-        Show-StringWithComment -LanguageName $LanguageSetup.WorkLanguageName -String $WorkLanguageString -Comment 'automatically suggested'
-        if ([string]::IsNullOrEmpty($DictValue)) {
-            $Dict.Add($BaseLanguageString, $WorkLanguageString)
+    # Dictionary value found
+    if (!([string]::IsNullOrEmpty($DictValue))) {
+        $WorkLanguageString = $DictValue
+        Show-StringWithComment -LanguageName $LanguageSetup.WorkLanguageName -String $WorkLanguageString -Comment 'copied from dictionary'
+    }
+    # Dictionary value not found
+    else {
+        # DevelopmentLanguageId is suggested
+        if (!([string]::IsNullOrEmpty($WorkLanguageString))) {
+            Show-StringWithComment -LanguageName $LanguageSetup.WorkLanguageName -String $WorkLanguageString -Comment 'suggested as DevelopmentLanguageId'
+            Write-Host "Use this translation?"
+            $WorkLanguageString = Get-ExtendedStringConfirmation -OriginalString $BaseLanguageString -NewString $WorkLanguageString -LanguageName $LanguageSetup.WorkLanguageName
+            if ([string]::IsNullOrEmpty($DictValue)) {
+                $Dict.Add($BaseLanguageString, $WorkLanguageString)
+            }
         }
-    } else {
-        # Dictionary value found
-        if (!([string]::IsNullOrEmpty($DictValue))) {
-            $WorkLanguageString = $DictValue
-            Show-StringWithComment -LanguageName $LanguageSetup.WorkLanguageName -String $WorkLanguageString -Comment 'copied from dictionary'
-        }
-        # Dictionary value not found
         else {
-            # Ask DeepL at first
-            if ($TranslationFiles.UseDeepL) {
+            # Ask DeepL
+            if ($LanguageSetup.UseDeepL) {
                 $WorkLanguageString = Get-DeeplTranslation -String $BaseLanguageString -LanguageSetup $LanguageSetup
             }
 
+            # Ask User when DeepL failed
             if ([string]::IsNullOrEmpty($WorkLanguageString)) {
                 # Ask User when DeepL failed
                 $BaseLanguageString | Set-Clipboard
@@ -456,7 +470,7 @@ function Get-Dictionary {
         [pscustomobject] $LanguageSetup
     )
 
-    $Dict = @{}
+    $Dict = [ordered]@{}
     if (Test-Path -Path $LanguageSetup.DictionatyPath -PathType Leaf) {
         Import-Csv -Path $LanguageSetup.DictionatyPath | ForEach-Object { $Dict.Add($_.Key, $_.Value) }
         Write-Host "Dictionary " -NoNewline -ForegroundColor Cyan
@@ -478,11 +492,14 @@ function Save-Dictionary {
         [pscustomobject] $LanguageSetup,
 
         [Parameter(mandatory = $true)]
-        [hashtable] $Dict
+        [System.Collections.Specialized.OrderedDictionary] $Dict
     )
 
     if ($LanguageSetup.DictionaryLines -ne $Dict.Count) {
-        $Dict.GetEnumerator() | Select-Object Key, Value | Export-Csv -Path $LanguageSetup.DictionatyPath -Encoding utf8 -Force
+        if (!(Test-Path -Path $LanguageSetup.DictionatyPath -PathType Container)) {
+            New-Item -Path $LanguageSetup.DictionatyPath -ItemType Directory -Force | Out-Null
+        }
+        $Dict.GetEnumerator() | Select-Object Key, Value | Sort-Object -Property 'Key' | Export-Csv -Path $LanguageSetup.DictionatyPath -Encoding utf8 -Force
         Write-Host "Dictionary has been updated by $($Dict.Count - $LanguageSetup.DictionaryLines) new lines" -ForegroundColor Cyan
     } else {
         Write-Host "Dictionary has not been changed" -ForegroundColor DarkGray
@@ -517,6 +534,9 @@ function Initialize-DeeplCredentials {
     if (Test-Path -Path "$PSScriptRoot\.deepl\ApiKey.xml" -PathType Leaf) {
         Write-Host "DeepL API key found" -ForegroundColor DarkGray
     } else {
+        if (!(Test-Path -Path "$PSScriptRoot\.deepl" -PathType Container)) {
+            New-Item -Path "$PSScriptRoot\.deepl" -ItemType Directory | Out-Null
+        }
         Write-Host "DeepL API key not found" -ForegroundColor Yellow
         $DeeplCred = Get-Credential -Message "Enter DeepL API key (without DeepL-Auth-Key prefix)" -UserName 'DeepL'
         $DeeplCred | Export-Clixml -Path "$PSScriptRoot\.deepl\ApiKey.xml" -Force
@@ -591,7 +611,7 @@ function Get-ExtendedStringConfirmation {
         [string] $LanguageName
     )
     while (!$Confirmed) {
-        Write-Host "Select: [A]ccept / [K]eep original / [E]dit / [C]apitalize? " -NoNewline
+        Write-Host "Select: [A]ccept / [K]eep original / [E]dit / [C]apitalize / [B]reak? " -NoNewline
         $Readkey = [console]::ReadKey()
 
         switch ($Readkey.Key) {
@@ -625,11 +645,15 @@ function Get-ExtendedStringConfirmation {
                 $Confirmed = Get-UserConfirmation
                 break
             }
+            "B" {
+                throw ""
+            }
             default {
                 $Result = ''
             }
         }
     }
+    Write-Host
     return $Result
 }
 
