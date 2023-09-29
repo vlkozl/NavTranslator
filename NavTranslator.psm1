@@ -496,6 +496,9 @@ function Save-Dictionary {
     )
 
     if ($LanguageSetup.DictionaryLines -ne $Dict.Count) {
+        if (!(Test-Path -Path $LanguageSetup.DictionatyPath -PathType Container)) {
+            New-Item -Path $LanguageSetup.DictionatyPath -ItemType Directory -Force | Out-Null
+        }
         $Dict.GetEnumerator() | Select-Object Key, Value | Sort-Object -Property 'Key' | Export-Csv -Path $LanguageSetup.DictionatyPath -Encoding utf8 -Force
         Write-Host "Dictionary has been updated by $($Dict.Count - $LanguageSetup.DictionaryLines) new lines" -ForegroundColor Cyan
     } else {

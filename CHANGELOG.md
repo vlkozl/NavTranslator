@@ -6,6 +6,7 @@
  - Added [B]reak option to ExtendedStringConfirmation
  - Added progress indicator; files without changes are not reported to the console
  - Fixed bug when saving DeepL credentials; .deepl folder created if not exists
+ - Fixed bug when saving dictionary; .dictionary folder created if not exists
  - Added .gitignore with /.deepl and /.dictionary folders
  - Other minor changes
 
