@@ -84,7 +84,8 @@ Results:
 
 ## 🍀 Contribution and feedback
 
-Suggestions and ideas are highly welcomed and appreciated. Feel free to open a new Pull Request or an Issue.
+Suggestions and ideas are highly welcomed and appreciated.
+Feel free to open a new discussion, Issue, or Pull Request.
 
 You can also ☕ [buy be a coffee](https://www.buymeacoffee.com/vkozlov) to say ❤ thanks. 
 
