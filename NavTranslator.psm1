@@ -99,6 +99,7 @@ function Start-TranslationProcess {
         }
 
         $LanguageSetup = Initialize-LanguageSetup -BaseLanguageId $BaseLanguageId -WorkLanguageId $WorkLanguageId
+        $LanguageSetup | Add-Member -MemberType NoteProperty -Name UseDeepL -Value $UseDeepL
         $Dict = Get-Dictionary -LanguageSetup $LanguageSetup
         $ObjectFiles = Get-ChildItem $Path -File -Recurse -Exclude '*_*' -Filter '*.txt'
 
@@ -121,16 +122,14 @@ function Start-TranslationProcess {
             Write-Progress -Activity $ActivityText -Status "$($File.Name) ($Index of $TotalFiles)" -PercentComplete $Progress
 
             if (Test-FileHaveMissingTranslation -FilePath $File.FullName -LanguageId $WorkLanguageId) {
-                Write-Host "============================================" -ForegroundColor Cyan
-                Write-Host "File: $($File.Name)" -ForegroundColor White
+            Write-Host "============================================" -ForegroundColor Cyan
+            Write-Host "File: $($File.Name)" -ForegroundColor White
             }
             else {
                 continue
             }
 
             $TranslationFiles = Export-LanguageFiles -File $File -BaseLanguageId $LanguageSetup.BaseLanguageId -WorkLanguageId $LanguageSetup.WorkLanguageId
-            $TranslationFiles | Add-Member -MemberType NoteProperty -Name UseDeepL -Value $UseDeepL
-
             $MissingTranslationsFileContent = Get-Content -Path $TranslationFiles.MissingTranslationsFile -Encoding utf8
             Write-Host "Missing translations: $($MissingTranslationsFileContent.Count)"
 
@@ -182,25 +181,29 @@ function Update-TranslationLine {
 
     $DictValue = $Dict[$BaseLanguageString]
 
-    # DevelopmentLanguageId fired or current Dictionary
-    if ($WorkLanguageString -ne '') {
-        Show-StringWithComment -LanguageName $LanguageSetup.WorkLanguageName -String $WorkLanguageString -Comment 'automatically suggested'
-        if ([string]::IsNullOrEmpty($DictValue)) {
-            $Dict.Add($BaseLanguageString, $WorkLanguageString)
+    # Dictionary value found
+    if (!([string]::IsNullOrEmpty($DictValue))) {
+        $WorkLanguageString = $DictValue
+        Show-StringWithComment -LanguageName $LanguageSetup.WorkLanguageName -String $WorkLanguageString -Comment 'copied from dictionary'
+    }
+    # Dictionary value not found
+    else {
+        # DevelopmentLanguageId is suggested
+        if (!([string]::IsNullOrEmpty($WorkLanguageString))) {
+            Show-StringWithComment -LanguageName $LanguageSetup.WorkLanguageName -String $WorkLanguageString -Comment 'suggested as DevelopmentLanguageId'
+            Write-Host "Use this translation?"
+            $WorkLanguageString = Get-ExtendedStringConfirmation -OriginalString $BaseLanguageString -NewString $WorkLanguageString -LanguageName $LanguageSetup.WorkLanguageName
+            if ([string]::IsNullOrEmpty($DictValue)) {
+                $Dict.Add($BaseLanguageString, $WorkLanguageString)
+            }
         }
-    } else {
-        # Dictionary value found
-        if (!([string]::IsNullOrEmpty($DictValue))) {
-            $WorkLanguageString = $DictValue
-            Show-StringWithComment -LanguageName $LanguageSetup.WorkLanguageName -String $WorkLanguageString -Comment 'copied from dictionary'
-        }
-        # Dictionary value not found
         else {
-            # Ask DeepL at first
-            if ($TranslationFiles.UseDeepL) {
+            # Ask DeepL
+            if ($LanguageSetup.UseDeepL) {
                 $WorkLanguageString = Get-DeeplTranslation -String $BaseLanguageString -LanguageSetup $LanguageSetup
             }
 
+            # Ask User when DeepL failed
             if ([string]::IsNullOrEmpty($WorkLanguageString)) {
                 # Ask User when DeepL failed
                 $BaseLanguageString | Set-Clipboard
