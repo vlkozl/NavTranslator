@@ -2,7 +2,7 @@
 
 ### v1.2 (29.09.2023)
  - Added [B]reak option to ExtendedStringConfirmation
-
+ - Other minor changes
 
 ### v1.1 (06.09.2023)
  - Adding Manifest to give more information about the module

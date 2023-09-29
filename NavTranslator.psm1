@@ -12,9 +12,10 @@ $Error.clear()
         -BaseLanguageId, as a language id which will be used for making translations from.
         -WorkLanguageId, as a language id which will be checked and updated.
 
-    Every LanguageId used is the integer number representing Windows Language Code.
+    Every LanguageId is an integer number representing Windows Language Code.
     See more here: https://www.venea.net/web/culture_code
-    To get your available languages, run:
+
+    To get your available languages, run in PowerShell (at least v6.2):
     Get-Culture -ListAvailable | select LCID,Name,DisplayName,ThreeLetterWindowsLanguageName,ThreeLetterISOLanguageName,TwoLetterISOLanguageName | Out-GridView
 
     The script will find all the Dynamics NAV TXT format objects recursively within the Path. Every
@@ -33,7 +34,7 @@ $Error.clear()
     ".\.dictionary\" folder. The dictionary is created automatically when it is not found. The dictionary
     will be filled with all confirmed translations and saved to the same path. During translation process,
     the dictionary will be checked for existing translations.
-    Existing dictionaries will be reused for all the next translations with the same language settings.
+    Existing dictionaries will be reused for all translations with the same language settings.
 
     DeepL
     DeepL is a translation web service which provides a free REST API. See more: https://www.deepl.com/pro-api
@@ -60,7 +61,7 @@ $Error.clear()
         - The script will find all the objects recursively and will help automate translation process.
         - Files within the Path will be updated.
         - Translations dictionary will be created in ".\.dictionary\ENU_DEU.csv"
-        - Dictionary will be automatically reused for any further translations given the same Base and Missing language ids.
+        - Dictionary will be automatically reused for any further translations given the same Base and Work language ids.
         - DeepL API key will be created under ".\.deepl\apikey.xml"
 
 .PARAMETER Path
@@ -633,6 +634,7 @@ function Get-ExtendedStringConfirmation {
             }
         }
     }
+    Write-Host
     return $Result
 }
 
