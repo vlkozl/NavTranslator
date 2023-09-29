@@ -531,6 +531,9 @@ function Initialize-DeeplCredentials {
     if (Test-Path -Path "$PSScriptRoot\.deepl\ApiKey.xml" -PathType Leaf) {
         Write-Host "DeepL API key found" -ForegroundColor DarkGray
     } else {
+        if (!(Test-Path -Path "$PSScriptRoot\.deepl" -PathType Container)) {
+            New-Item -Path "$PSScriptRoot\.deepl" -ItemType Directory | Out-Null
+        }
         Write-Host "DeepL API key not found" -ForegroundColor Yellow
         $DeeplCred = Get-Credential -Message "Enter DeepL API key (without DeepL-Auth-Key prefix)" -UserName 'DeepL'
         $DeeplCred | Export-Clixml -Path "$PSScriptRoot\.deepl\ApiKey.xml" -Force
